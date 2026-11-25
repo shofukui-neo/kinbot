@@ -1096,6 +1096,9 @@ function apiTokenUser(req) {
   return null;
 }
 
+// kinXs の会社の中身（detail）は、1分覚えた一覧（kinxsBuildMemo）から引く（2026-11-25 重さの直し）。
+//   kinXs で何かを変えたら（GET 以外が終わったら）、覚えた一覧を捨てて、次に開いたときに新しい中身が出るようにする
+app.use((req, res, next) => { if (req.method !== "GET" && req.path.startsWith("/api/kinxs")) res.on("finish", () => { _kxBuildMemo = { at: 0, p: null }; }); next(); });
 app.use(async (req, res, next) => {
   if (!authEnabled()) {
     req.user = "admin";
@@ -14939,6 +14942,8 @@ async function kinxsBuild() {
       actions, kickoffOn: kickOn, kickoffManual: !!r.kickoff_on, kickoffClear: koClear, kickoffPlan: koPlanOf ? new Date(Date.parse(koPlanOf.start) + 9 * 3600000).toISOString().slice(0, 16).replace("T", " ") : "", publishedOn: pubOn, kenshuMonth: r.kenshu_month || "", ksMonth: oldDeal ? "" : ksMonthEff, kenshuOn, kenshuSt: kenshu, delivered, endOn: ymd0(r.end_on),
       // 前月比のための日付（2026-11-04）：納品した日（検収書の回収日 → 10月より前の受注は受注日 → 自動で回収済みにしたものは受注日＋90日）・DOCを最初に受注した日
       deliveredOn: delivered ? (kenshuOn || (oldDeal ? bookedYmd0 : "") || (bookedYmd0 ? new Date(Date.parse(bookedYmd0 + "T00:00:00+09:00") + 90 * 86400000 + 9 * 3600000).toISOString().slice(0, 10) : "")) : "",
+      // 納品メールを送った日（めやす）：開封の記録 → 下書きを作った日 → 納品日 の順。kinXs の「要確認」（納品メールから2か月たっても掲載・利用が確認できない）に使う（2026-11-25 田中さん）
+      mailOn: String(mail).startsWith("送付済み") ? String((tr && tr.openedAt) || (k && k.draft_at && new Date(k.draft_at).toISOString()) || (delivered ? (kenshuOn || "") : "") || "").slice(0, 10) : "",
       docBooked: (r.products || []).filter((p0) => p0 && typeof p0 === "object" && p0.booked && ["空間", "AI"].includes(kxClassOf(p0.name))).map((p0) => String(p0.booked).slice(0, 10)).sort()[0] || "",
       invoiceNeed: r.invoice_need == null ? null : !!r.invoice_need, invoiceState: r.invoice_state || "", invoiceDate: ymd0(r.invoice_date),
       mtgSummary: r.mtg_summary || null, naDetail: r.na_detail || null, kenshuNa: r.kenshu_na === true,
@@ -18548,6 +18553,22 @@ app.get("/api/kinxs/docai/companies", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // うまく回れなかったときに、拡張機能が画面の作り（部品の名前・大きさ）を送ってくる。直すときに見る（候補者の文は入れない）
+// DOC の AI の管理画面「ユーザー管理」の一覧（メール・担当企業＝企業ID・権限・作成日）を受け取って覚える（2026-11-25 田中さん）。
+//   拡張機能がユーザー管理を開いたときに送ってくる。パスワードは管理画面にも出ないので、ここには無い。
+//   一覧に出た会社の分は入れ替える（消えたユーザーも消える）。一覧の外の会社の分はそのまま
+app.post("/api/kinxs/docai/users", async (req, res) => {
+  try {
+    if (!(await canKinxs(req))) return res.status(403).json({ error: "権限がありません" });
+    const list = (Array.isArray(req.body && req.body.users) ? req.body.users : []).slice(0, 2000)
+      .map((u) => ({ email: String(u.email || "").toLowerCase().slice(0, 120), company: String(u.company || "").trim().slice(0, 60), role: String(u.role || "").slice(0, 20), created: String(u.created || "").slice(0, 19) }))
+      .filter((u) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u.email) && u.company);
+    const st = await getSettings().catch(() => ({})); const all = { ...(st.docAiUsers || {}) };
+    const by = new Map(); for (const u of list) { if (!by.has(u.company)) by.set(u.company, []); by.get(u.company).push({ email: u.email, role: u.role, created: u.created }); }
+    for (const [co, us] of by) all[co] = us;
+    await saveSettings({ docAiUsers: all, docAiUsersAt: new Date().toISOString() });
+    res.json({ ok: true, companies: by.size, users: list.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post("/api/kinxs/docai/diag", async (req, res) => {
   try { if (!(await canKinxs(req))) return res.status(403).json({ error: "権限がありません" }); const st = await getSettings().catch(() => ({})); const list = Array.isArray(st.docAiDiag) ? st.docAiDiag : [];
     list.unshift({ at: new Date().toISOString(), by: req.user, ...(req.body && typeof req.body === "object" ? req.body : {}) }); await saveSettings({ docAiDiag: JSON.parse(JSON.stringify(list.slice(0, 5)).slice(0, 200000)) }).catch(async () => { await saveSettings({ docAiDiag: list.slice(0, 1) }); }); res.json({ ok: true }); }
@@ -18600,10 +18621,20 @@ app.get("/api/kinxs/accounts/:id/hiring", async (req, res) => {
     res.json({ ok: true, ...(await kxHiringMake(req.params.id, req.user)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// 会社の中身（detail）で読む SF の取引先・担当者は、10分覚えておく（2026-11-25 田中さん「kinXs は動きが重たい」）。
+//   開くたびに SF を2回読んでいて、1回あたり 0.5〜1 秒かかっていた。取引先の住所・電話・担当者はめったに変わらない
+const _kxSfMemo = new Map();
+async function kxSfMemo(key, fn) {
+  const c = _kxSfMemo.get(key); if (c && Date.now() - c.at < 10 * 60000) return c.v;
+  const v = await fn(); _kxSfMemo.set(key, { at: Date.now(), v });
+  if (_kxSfMemo.size > 2000) _kxSfMemo.delete(_kxSfMemo.keys().next().value);
+  return v;
+}
 app.get("/api/kinxs/accounts/:id/detail", async (req, res) => {
   try {
     if (!(await canKinxs(req))) return res.status(403).json({ error: "権限がありません" });
-    const { items, testItems, mtBy, kickBy } = await kinxsBuild();
+    // 毎回作り直すと1秒ほどかかるので、1分覚えた一覧から引く。保存のあとの描き直し（?fresh=1）は作り直す
+    const { items, testItems, mtBy, kickBy } = req.query.fresh ? await kinxsBuild() : await kinxsBuildMemo();
     const x = items.find((i) => i.id === req.params.id) || (testItems || []).find((i) => i.id === req.params.id);
     if (!x) return res.status(404).json({ error: "見つかりません" });
     const key = csCoKey(x.name);
@@ -18658,7 +18689,8 @@ app.get("/api/kinxs/accounts/:id/detail", async (req, res) => {
         }
         if (accId) {
           const id = String(accId).replace(/'/g, "");
-          const a = ((await sfQuery(sfU, `SELECT Website, Phone, BillingPostalCode, BillingState, BillingCity, BillingStreet FROM Account WHERE Id='${id}' LIMIT 1`)).records || [])[0];
+          out.sfAccountId = id;   // 企業モーダルの Salesforce のマークから取引先を開くため（手で入れた会社も、名前で見つけた取引先へ）
+          const a = (await kxSfMemo(`acc:${id}`, async () => ((await sfQuery(sfU, `SELECT Website, Phone, BillingPostalCode, BillingState, BillingCity, BillingStreet FROM Account WHERE Id='${id}' LIMIT 1`)).records || [])[0] || null));
           const tagSf = out.sfMatched ? "SF（会社名で照合）" : "SF";
           if (a) {
             if (!out.website && a.Website) { out.website = a.Website; out.source.website = tagSf; }
@@ -18670,7 +18702,7 @@ app.get("/api/kinxs/accounts/:id/detail", async (req, res) => {
             // まとめた（旧社名の）取引先の担当者もいっしょに
             const mergedIds = (await kinxsList().catch(() => [])).filter((y) => y.merged_into === x.id).map((y) => String(y.account_id).replace(/'/g, "")).filter((y) => /^[0-9a-zA-Z]{15,18}$/.test(y));
             const idList = [id, ...mergedIds].map((y) => `'${y}'`).join(",");
-            const cs = (await sfQuery(sfU, `SELECT Name, Title, Phone, MobilePhone, Email FROM Contact WHERE AccountId IN (${idList}) ORDER BY CreatedDate DESC LIMIT 8`)).records || [];
+            const cs = await kxSfMemo(`con:${idList}`, async () => (await sfQuery(sfU, `SELECT Name, Title, Phone, MobilePhone, Email FROM Contact WHERE AccountId IN (${idList}) ORDER BY CreatedDate DESC LIMIT 8`)).records || []);
             out.contacts = cs.map((c) => ({ name: c.Name || "", title: c.Title || "", phone: c.Phone || c.MobilePhone || "", email: c.Email || "" }));
             if (cs.length) out.source.contacts = tagSf;
           }
@@ -18688,6 +18720,9 @@ app.get("/api/kinxs/accounts/:id/detail", async (req, res) => {
       if (!out.aiUrl && kk.doc_candidate_url) { out.aiUrl = kk.doc_candidate_url; out.source.aiUrl = "CS連携"; }
     }
     out.adminUrl = "https://casual-interview-api.brainverse-ai.com/";
+    // AI の管理画面のユーザー（拡張機能がユーザー管理から読んだもの）。企業ID は AI の候補者画面の URL の最後
+    { const co = (/brainverse-ai\.com\/([A-Za-z0-9_-]+)/.exec(out.aiUrl || "") || [])[1] || (/(?:^|\/\/|\.)([A-Za-z0-9_-]+)\.aticoti\./i.exec(out.vrUrl || "") || [])[1] || (out.portal && out.portal.id) || "";
+      const st1 = await getSettings().catch(() => ({})); out.docAiUsers = co ? ((st1.docAiUsers || {})[co] || []) : []; out.docAiUsersAt = st1.docAiUsersAt || ""; }
     if (!out.website) {
       const d = (out.contacts || []).map((c) => String(c.email || "").toLowerCase().split("@")[1]).find((d0) => d0 && !KX_FREE_MAIL.test(d0));
       if (d) { out.website = `https://${d.replace(/^mail\./, "")}`; out.source.website = "メールのドメイン"; }
@@ -35110,8 +35145,10 @@ app.get("/api/gmail/actions", async (req, res) => {
 // このコードがどのビルドかを示す印。ログと画面の両方で確認できる。
 // 新機能を足したらここを更新する。
 const START_TIME = new Date().toISOString();
-const BUILD_TAG = "2026-11-25sg MOCHICALL：メール・問い合わせフォームの名乗りを「株式会社ネオキャリアの福井です」の形に／送る人ごとの署名（自分の署名・名乗り）／問い合わせフォームは署名から会社名・電話を入れ、自動で決められない必須の欄（クイズなど）は画面で答えて送れる ／ 2026-11-25mg 合流：2026-11-25nx BALES：取り込み・同期・引き継ぎで次回アクションのコメントも反映／2026-11-25ad SHOBO リスト管理：表で選んだ会社（どのリストでも）を、その人のかけるリストに追加できる（件数・表・今日かけるリストにも入る・優先度も一緒に付けられる）／2026-11-25tk MOCHICALL：管理者は架電画面からトークスクリプトを直せるように／2026-11-25td MOCHICALL：リストを選ぶ欄に今日かけるリストが2つ出ていたのを1つに（全員分の入れ物のリストは出さない）";
+const BUILD_TAG = "2026-11-25y kinXs ホームの担当企業：段・納品待ちを押すと会社の一覧をモーダルで。／2026-11-25x kinXs ホームの担当企業：上の3つの数字をやめ、今月・来月の納品待ちを見出しのとなりに。／2026-11-25w kinXs ホームのタスク：期日の札を押すとカレンダーで期日を変えられる。／2026-11-25v 担当企業の流れのキックオフ未設定・要確認を大きく・点滅。／2026-11-25u 要アクションが0社のときは1行だけにする。／2026-11-25t kinXs ホームを作りかえ（案C）：左にタスク（ぜんぶ・期限切れ・今日の数、要アクションを赤い枠で上に固定、タスクの一覧）、右に担当企業・これからの更新（月ごとに縦）・情報不足。／2026-11-25s kinXs 担当企業の流れの先頭を「受注」から「キックオフ未設定」に。／2026-11-25r kinXs：初期費用なしの会社は検収書回収を飛ばす（道のりは「不要（初期なし）」と薄く出す）。／2026-11-25q ステージの判定：10月より前の納品済みは納品メール済み、受注日が無くても先が済めば受注済み、送った日が分からないときは納品日から数える。／2026-11-25p kinXs ステージをそろえる：受注→キックオフ設定→キックオフ実施→検収書回収→納品メール回収→オンボーディング中→要確認（納品メールから2か月・掲載/利用が未確認）→掲載・利用中。担当企業の流れと企業モーダルの道のりの両方で同じ判定。／2026-11-25o kinXs 企業モーダル：議事録のタブをやめ、活動記録の「いまどこ？」の下に議事録・接触の記録・要望をまとめる。／2026-11-25fs MOCHICALL：問い合わせフォームの「送る」が止まったままになるのを直した（1回の上限2分・相手のページを読む処理に待ち時間の上限・送っている間は秒数を出す・確認画面の「検索」「再入力する」を押さない・所在国は「日本」を選ぶ） ／ 2026-11-25n 担当企業の枠の虫めがねのカーソルをやめる。／2026-11-25m kinXs ホームの担当企業から「担当企業へ ›」をなくす（余白で大きく開けるため）。／2026-11-25l 担当企業の大きなモーダルは、ホームの自分／全員と選んでいた数字から始める。／2026-11-25k kinXs ホーム：担当企業の枠の余白を押すと、担当企業の画面を大きくモーダルで出す。／2026-11-25j kinXs：VR だけの会社の企業IDは VR の URL の .aticoti の前（polus.aticoti.com → polus）。／2026-11-25sg MOCHICALL：メール・問い合わせフォームの名乗りを「株式会社ネオキャリアの福井です」の形に／送る人ごとの署名（自分の署名・名乗り）／問い合わせフォームは署名から会社名・電話を入れ、自動で決められない必須の欄（クイズなど）は画面で答えて送れる ／ 2026-11-25i MOCHICALL 検討時期待ち：SF の検討開始時期・架電で聞いた検討時期が2か月より先の会社は「かける」に出さない（情報が1年以上前ならかける。人と約束した掛け直しは出す）。リスト管理に「検討時期待ち」の絞り込み。／2026-11-25talkmap MOCHICALL：リスト管理に「リストとトークの対応」を足し、リストごとのトーク A/B/C に、ほかのリストのトークを写して差し替え・外しができるように／2026-11-25i 拡張機能 2.2.34：DOC の AI の管理画面「ユーザー管理」を開くと、一覧のメール・企業ID・権限を kinXs に送る。kinXs の企業情報「AIの管理者のログイン情報」に、その会社のユーザーのメールを出す（押すとコピー）。パスワードは管理画面にも出ないので出さない。／2026-11-25talkmap MOCHICALL：リスト管理に「リストとトークの対応」を足し、リストごとのトーク A/B/C に、ほかのリストのトークを写して差し替え・外しができるように";
 const BUILD_FEATURES = [
+  "MOCHICALL：問い合わせフォームの「送る」が止まらないように（2分で打ち切って理由を出す。送信を押したあとなら「届いたか分からない」にする）。送っている間は経過の秒数を出す",
+  "MOCHICALL：検討時期が2か月より先の会社は「かける」に出さない（SF の検討開始時期は項目履歴で書かれた日を見て、1年以上前の情報ならかける）。リスト管理に「検討時期待ち」の絞り込み",
   "MOCHICALL：資料送付・ヒアリングのメールと問い合わせフォームの名乗りを「株式会社ネオキャリアの福井です」に。送る人ごとに署名を設定でき、フォームの会社名・電話・住所も署名から入る。フォームで自動で決められない必須の欄（クイズ・フリガナなど）は画面で答えて送れる",
   "MOCHICALL：リスト管理で「過去の履歴：見せる／伏せる」を選べる（伏せたリストは架電画面で過去の架電・メール・フォームの記録を出さない）",
   "MOCHICALL：リストを選ぶ欄から「今日かけるリスト（リスト管理）」（全員の今日の分の入れ物）を外し、本人の今日の分だけ出す",

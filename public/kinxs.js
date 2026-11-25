@@ -648,8 +648,10 @@ function kxCoPane(d) {
           <div class="kx-edact"><button type="button" class="hp-b" data-cancel>やめる</button><button type="button" class="kx-btn kx-pri" data-save-info>保存</button></div>
         </div>
         <div class="kx-sub2">AIの管理者のログイン情報</div>
+        ${(f.docAiUsers || []).length ? `<div class="kx-note" style="margin:2px 0 6px">管理画面のユーザー管理から（${esc(String(f.docAiUsersAt || "").slice(0, 10).replace(/-/g, "/"))} 時点）。パスワードは管理画面にも出ないため、ここには出ません</div>`
+          + f.docAiUsers.map((u) => `<div class="kx-acc"><div class="lb2">${esc(u.role || "ユーザー")}</div><div class="v"><span class="id">${esc(u.email)}</span><button type="button" class="hp-b" data-copy="${esc(u.email)}">コピー</button></div></div>`).join("") : ""}
         ${(f.ai || []).length ? f.ai.map((a) => `<div class="kx-acc" data-ai-i="${esc(a.id)}"><div class="lb2">${esc(a.label || "アカウント")}</div><div class="v"><span class="id">${esc(a.login || "—")}</span>${a.login ? `<button type="button" class="hp-b" data-copy="${esc(a.login)}">IDコピー</button>` : ""}</div>${a.has_pass ? `<div class="v"><span class="kx-pw" data-ai-pw>••••••••</span><button type="button" class="hp-b" data-ai-show>見る</button><button type="button" class="hp-b" data-ai-copy>コピー</button></div>` : ""}</div>`).join("")
-          : `<span class="kx-none">まだありません（CS連携の企業カードの「AIアカウント」で入れられます）</span>`}
+          : (f.docAiUsers || []).length ? "" : `<span class="kx-none">まだありません（拡張機能を入れたパソコンで AI の管理画面の「ユーザー管理」を開くと、ここにメールが入ります。CS連携の企業カードの「AIアカウント」でも入れられます）</span>`}
       </section>
     </div>
   </div>`;
@@ -723,17 +725,79 @@ function kxStatusPane(d) {
     </div>`;
   return view + edit;
 }
+// 会社の中身（detail）を先に取っておく・覚えておく（2026-11-25 田中さん「kinXs は全体的に動きが重たい。クリックしたらすぐモーダルが開かれてほしい」）。
+//   detail は 1〜2 秒かかる（SF の取引先・担当者も読むため）。カーソルを会社に乗せた時点で読み始め、
+//   押したらすぐ枠を出し、届いたら中身を入れる。一度開いた会社は 2 分間覚えておき、すぐ出してから裏で新しいものに入れ替える
+const _kxDetail = new Map();   // id -> { at, p（読み込み中の Promise）, d }
+function kxDetailGet(id, fresh) {
+  const c = _kxDetail.get(id);
+  if (!fresh && c && (c.p || Date.now() - c.at < 120000)) return c.p || Promise.resolve(c.d);
+  const p = api(`/api/kinxs/accounts/${encodeURIComponent(id)}/detail${fresh === "save" ? "?fresh=1" : ""}`).then((d) => { _kxDetail.set(id, { at: Date.now(), d }); return d; }).catch((e) => { _kxDetail.delete(id); throw e; });
+  _kxDetail.set(id, { at: Date.now(), p, d: c && c.d });
+  return p;
+}
+// 会社のカード・行（data-open などに会社の ID が付いているもの）にカーソルが乗ったら、先に読み始める
+document.addEventListener("pointerover", (e) => {
+  const el = e.target && e.target.closest && e.target.closest("[data-open],[data-id],[data-card],[data-kh-open],[data-ms-open],[data-tk-co],[data-tk-open]");
+  const id = el && (el.dataset.open || el.dataset.id || el.dataset.card || el.dataset.khOpen || el.dataset.msOpen || el.dataset.tkCo || el.dataset.tkOpen);
+  if (id && /^(001[0-9A-Za-z]{12,15}|manual-[\w-]+)$/.test(id) && !_kxDetail.has(id)) kxDetailGet(id).catch(() => {});
+}, { passive: true });
+// 企業モーダルの見出しの2段目に「CS担当（その場で変えられる）」と「DOC の企業ID（押すとコピー）」を出す（2026-11-25 田中さん）。
+//   企業ID は AI（候補者画面）の URL の最後（brainverse-ai.com/<企業ID>）。無ければ CS連携のポータルの企業ID
+function kxDocCompanyId(d) {
+  const ai = (d.info && d.info.aiUrl) || "";
+  // VR だけの会社は、VR の URL の「.aticoti」の前（polus.aticoti.com → polus）（2026-11-25 田中さん）
+  const vr = (d.info && d.info.vrUrl) || "";
+  return (/brainverse-ai\.com\/([A-Za-z0-9_-]+)/.exec(ai) || [])[1] || (/(?:^|\/\/|\.)([A-Za-z0-9_-]+)\.aticoti\./i.exec(vr) || [])[1] || (d.info && d.info.portal && d.info.portal.id) || "";
+}
+function kxHeadExtra(d) {
+  const x = d.item, st = d.status || {};
+  const opts = [...new Set((st.csOptions || []).filter(Boolean))];
+  const sur = (n) => String(n || "").normalize("NFKC").trim().split(/[\s　]+/)[0];
+  let cur = x.cs || "";
+  if (cur && !opts.includes(cur)) { const hit = opts.find((o) => sur(o) === sur(cur) || o.startsWith(sur(cur)) || sur(cur).startsWith(sur(o))); if (hit) cur = hit; else opts.push(cur); }
+  return `<span class="kx-hx"><span class="kx-note">CS担当</span><select class="kx-hx-cs" data-hx-cs title="CS担当を変える（すぐ保存）"><option value="">（未定）</option>${opts.map((o) => `<option ${o === cur ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></span>`;
+}
+// 社名のとなりの企業ID（押すとコピー）（2026-11-25 田中さん「会社名のとなりに企業IDをおいて」）
+function kxHeadId(d) {
+  const cid = kxDocCompanyId(d); if (!cid) return "";
+  const ico = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="3"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
+  return `<button type="button" class="kx-hx-id" data-hx-copy="${esc(cid)}" title="押すと DOC の企業IDをコピーします"><span class="kx-note">企業ID</span><b>${esc(cid)}</b>${ico}</button>`;
+}
+// 社名の下：NeoSTAGE と Salesforce の小さなマーク。押すとその会社のページを開く（2026-11-25 田中さん「社名の下のプラン名はいらない。ネオステ・SF のマークを小さく入れて、それぞれ企業のページへ」）。
+//   NeoSTAGE は企業検索をこの会社で開く（拡張機能 kinbot-ext が入っていれば、そのまま検索まで進む）。SF は取引先のページ
+function kxGoLinks(d) {
+  const x = d.item;
+  const sfId = /^001[0-9A-Za-z]{12,15}$/.test(x.id) ? x.id : ((d.info && d.info.sfAccountId) || "");
+  const neo = `https://neo-crm.net/corp_search#kbsf=${encodeURIComponent(sfId || "")}&kbq=${encodeURIComponent(x.name || "")}&kbname=${encodeURIComponent(x.name || "")}`;
+  return `<a class="kx-go" href="${esc(neo)}" target="_blank" rel="noopener" title="NeoSTAGE でこの会社を開く"><img src="/logo-neostage.png" alt="NeoSTAGE" class="neo" /></a>`
+    + (sfId ? `<a class="kx-go" href="https://neo-media.lightning.force.com/lightning/r/Account/${esc(sfId)}/view" target="_blank" rel="noopener" title="Salesforce でこの会社（取引先）を開く"><img src="/logo-salesforce.png" alt="Salesforce" class="sf" /></a>` : "");
+}
 async function openDetail(id, reuse) {
+  // 押したらすぐ枠を出す（中身は届いてから）。保存のあとの描き直し（reuse）は今の画面のまま
+  let bg0 = reuse && reuse.bg;
+  if (!bg0) {
+    bg0 = document.createElement("div"); bg0.className = "kx-drawer-bg";
+    const row = ((lsData && lsData.items) || []).find((y) => y.id === id) || {};
+    bg0.innerHTML = `<aside class="kx-drawer" role="dialog" aria-busy="true" style="width:min(560px,100%)"><div style="display:flex;align-items:center;gap:14px"><div class="kx-dlogo">${row.logo ? `<img src="${esc(row.logo)}" alt="" />` : ""}</div><div style="min-width:0"><h2>${esc(row.name || "")}</h2><div class="kx-note">読み込んでいます…</div></div></div><div class="kx-sec" style="height:120px;opacity:.5"></div><div class="kx-sec" style="height:220px;opacity:.35"></div></aside>`;
+    bg0.addEventListener("click", (e) => { if (e.target === bg0 && bg0.querySelector('[aria-busy="true"]')) bg0.remove(); });
+    document.body.appendChild(bg0);
+  }
   let d;
-  try { d = await api(`/api/kinxs/accounts/${encodeURIComponent(id)}/detail`); } catch (e) { alert(e.message); return; }
+  const cached = !reuse && _kxDetail.get(id) && _kxDetail.get(id).d;
+  try { d = reuse ? await kxDetailGet(id, "save") : (cached || await kxDetailGet(id)); } catch (e) { if (!reuse) bg0.remove(); alert(e.message); return; }
+  if (!bg0.isConnected) return;   // 読み込み中に閉じた
+  // 覚えていたものを出したときは、裏で新しいものを読み、変わっていたら描き直す（開いているタブ・スクロールはそのまま）
+  if (cached) kxDetailGet(id, true).then((d2) => { if (bg0.isConnected && JSON.stringify(d2) !== JSON.stringify(cached)) { const on = bg0.querySelector("[data-tab].on"); const dr = bg0.querySelector(".kx-drawer"); openDetail(id, { bg: bg0, tab: on && on.dataset.tab, scroll: dr && dr.scrollTop }); } }).catch(() => {});
   const x = d.item;
   // 保存したあとは、モーダルを閉じずに中身だけ描き直す（開いていたタブ・スクロールの位置もそのまま）
-  const bg = (reuse && reuse.bg) || document.createElement("div"); bg.className = "kx-drawer-bg";
+  const bg = bg0; bg.className = "kx-drawer-bg";
   const tog = (key, val, opts) => `<div class="kx-tog" data-tog="${key}">${opts.map(([v, t]) => `<button type="button" data-v="${v}" class="${String(val) === String(v) ? "on" : ""}">${t}</button>`).join("")}</div>`;
   bg.innerHTML = `<aside class="kx-drawer" role="dialog" aria-label="${esc(x.name)}" style="width:min(560px,100%)">
     <div style="display:flex;align-items:center;gap:14px">
       <div class="kx-dlogo" data-logo-btn role="button" tabindex="0" title="押すと、ロゴを取り直す・手で入れる">${x.logo ? `<img src="${esc(x.logo)}" alt="" data-logo-img" />` : `<span class="mono">${esc((x.name || "？").replace(/^(株式会社|有限会社|社会福祉法人|医療法人社団|医療法人|一般社団法人|公益財団法人|学校法人)\s*/, "").slice(0, 1))}</span>`}<span class="ed">ロゴ</span></div>
-      <div style="min-width:0"><h2>${esc(x.name)}${(x.formerNames || []).length ? `<span class="kx-former-h">（旧：${esc(x.formerNames.slice().reverse().join("・旧："))}）</span>` : ""} <button type="button" class="kx-ren" data-ren-open title="社名が変わったとき">社名を変える</button> <a class="kx-ren" style="text-decoration:none" href="https://neo-crm.net/corp_search#kbsf=${encodeURIComponent(x.id)}&kbname=${encodeURIComponent(x.name || "")}" target="_blank" rel="noopener" title="NeoSTAGE の企業検索を開いて、この会社の値を入れます（拡張機能 kinbot-ext が要ります）">NeoSTAGEに入れる ↗</a></h2><div class="kx-prods" data-prods><div class="t">${esc(x.products.join("・"))}</div><button type="button" class="ar" data-prods-tog hidden aria-label="商品をすべて見る">▼ すべて見る</button></div></div><button type="button" class="kx-btn" data-archive style="margin-left:auto" title="${x.archived ? "ユーザー一覧・フェーズ別に戻す" : "動いていない会社を、ユーザー一覧・フェーズ別から見えなくする（あとで戻せる）"}">${x.archived ? "アーカイブから戻す" : "アーカイブする"}</button><button type="button" class="kx-btn" data-x>閉じる</button></div>
+      <div style="min-width:0"><h2>${esc(x.name)}${(x.formerNames || []).length ? `<span class="kx-former-h">（旧：${esc(x.formerNames.slice().reverse().join("・旧："))}）</span>` : ""} <button type="button" class="kx-ren kx-pen" data-ren-open title="社名を変える（社名が変わったとき）" aria-label="社名を変える"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg></button>${kxHeadId(d)}</h2>
+        <div class="kx-golinks">${kxGoLinks(d)}</div></div><button type="button" class="kx-btn" data-archive style="margin-left:auto" title="${x.archived ? "ユーザー一覧・フェーズ別に戻す" : "動いていない会社を、ユーザー一覧・フェーズ別から見えなくする（あとで戻せる）"}">${x.archived ? "アーカイブから戻す" : "アーカイブする"}</button><button type="button" class="kx-btn" data-x>閉じる</button></div>
     ${x.archived ? '<div class="kh-warn" style="margin:0">この会社はアーカイブしています（ユーザー一覧・フェーズ別には出ません）</div>' : ""}
     <div class="kx-logo-menu" data-ren-box hidden>
       <div class="h" style="width:100%"><b>社名を変える</b><span class="kx-note">今の名前は「旧社名」として残り、「新しい社名（旧：今の社名）」と出ます</span><button type="button" class="hp-b" data-ren-close style="margin-left:auto">しまう ▲</button></div>
@@ -749,10 +813,10 @@ async function openDetail(id, reuse) {
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="kx-lab l-${esc(x.label)}">${esc(x.label)}</span><button type="button" class="kx-rank r-${x.rank} kx-rank-btn" data-rank-open title="押すと更新確度を変えられます" aria-expanded="false">${x.rank} <small>▾</small></button><span class="kx-note">更新月 ${x.renew ? esc(x.renew.replace("-", "/")) : "—"}${x.left != null ? `（${x.left < 0 ? `${-x.left}日過ぎ` : `あと${x.left}日`}）` : ""}${x.renewLocked ? "・手で決めた" : ""}</span>
       <button type="button" class="kx-ren" data-renew-open>更新月を変える</button>
-      <span class="kx-renew-ed" data-renew-box hidden><input type="month" class="kx-in" data-renew-in value="${esc(x.renew || "")}" style="width:150px;height:30px" /><button type="button" class="hp-b" data-renew-save>保存</button>${x.renewLocked ? '<button type="button" class="hp-b" data-renew-auto title="手で決めた更新月をやめて、契約終了日の前月に戻す">自動に戻す</button>' : ""}<button type="button" class="hp-b" data-renew-cancel>やめる</button></span></div>
+      <span class="kx-renew-ed" data-renew-box hidden><input type="month" class="kx-in" data-renew-in value="${esc(x.renew || "")}" style="width:150px;height:30px" /><button type="button" class="hp-b" data-renew-save>保存</button>${x.renewLocked ? '<button type="button" class="hp-b" data-renew-auto title="手で決めた更新月をやめて、契約終了日の前月に戻す">自動に戻す</button>' : ""}<button type="button" class="hp-b" data-renew-cancel>やめる</button></span>${kxHeadExtra(d)}</div>
     <div class="kx-rank-pop" data-rank-pop hidden></div>
     ${x.alerts.length ? `<div class="kx-sec" style="background:#FFF7EA;border-color:#F0D5B0;color:#6B3700;font-size:12.5px"><b>要注意：</b>${x.alerts.map((a) => `${esc(a.rule)}（${esc(a.detail)}）`).join("／")}</div>` : ""}
-    <div class="kx-tabs"><button type="button" class="on" data-tab="task">タスク</button><button type="button" data-tab="info">活動記録</button><button type="button" data-tab="tl">議事録（${d.timeline.filter((t) => t.kind === "mtg").length}）</button><button type="button" data-tab="hire">採用状況</button><button type="button" data-tab="docai">候補者の質問</button><button type="button" data-tab="co">企業情報</button></div>
+    <div class="kx-tabs"><button type="button" class="on" data-tab="task">タスク</button><button type="button" data-tab="info">活動記録</button><button type="button" data-tab="hire">採用状況</button><button type="button" data-tab="docai">候補者の質問</button><button type="button" data-tab="co">企業情報</button></div>
     <div data-pane="hire" hidden style="display:flex;flex-direction:column;gap:12px"><div class="kx-sec" data-hire-box><div class="kx-note">「採用状況」を押すと、議事録から読み取ります…</div></div></div>
     <div data-pane="docai" hidden style="display:flex;flex-direction:column;gap:12px"><div class="kx-sec" data-docai-box><div class="kx-note">読み込んでいます…</div></div></div>
     <div data-pane="task" style="display:flex;flex-direction:column;gap:12px">
@@ -825,8 +889,19 @@ async function openDetail(id, reuse) {
     const pop = bg.querySelector("[data-rank-pop]"); if (rk && pop) { pop.appendChild(rk); }
     if (dl) dl.style.display = "none";
   })();
+  // 議事録のタブは活動記録にまとめる（2026-11-25 田中さん「議事録は活動記録にまとめてほしい」）。
+  //   「いまどこ？」のすぐ下に、要望・問い合わせ・議事録のまとめ・接触の記録・議事録の一覧・変更の履歴を並べる
+  { const tl = bg.querySelector('[data-pane="tl"]'), info = bg.querySelector('[data-pane="info"]');
+    if (tl && info) { const w = document.createElement("div"); w.className = "kx-tl-in"; w.style.cssText = "display:flex;flex-direction:column;gap:12px";
+      while (tl.firstChild) w.appendChild(tl.firstChild); const now = info.querySelector(".kx-now") || info.firstElementChild; if (now) now.after(w); else info.prepend(w); tl.remove(); } }
+  if (reuse && reuse.tab === "tl") reuse.tab = "info";
   if (!bg.isConnected) document.body.appendChild(bg);
   kxCircusMount(bg, x); kxKenshuMount(bg, x); kxNowMount(bg); kxSalesMount(bg, x); kxCTaskMount(bg, x); kxGuideMount(bg, x, d);
+  { const cs = bg.querySelector("[data-hx-cs]"); if (cs) cs.addEventListener("change", () => put({ cs_name: cs.value }));
+    const cp = bg.querySelector("[data-hx-copy]"); if (cp) cp.addEventListener("click", async () => {
+      const v = cp.dataset.hxCopy; try { await navigator.clipboard.writeText(v); } catch { const t = document.createElement("textarea"); t.value = v; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+      const b = cp.querySelector("b"); const old0 = b.textContent; b.textContent = "コピーしました"; cp.classList.add("ok"); setTimeout(() => { b.textContent = old0; cp.classList.remove("ok"); }, 1200);
+    }); }
   if (reuse) {
     if (reuse.tab) { bg.querySelectorAll("[data-tab]").forEach((x2) => x2.classList.toggle("on", x2.dataset.tab === reuse.tab)); bg.querySelectorAll("[data-pane]").forEach((p2) => { p2.hidden = p2.dataset.pane !== reuse.tab; }); }
     const dr = bg.querySelector(".kx-drawer"); if (dr && reuse.scroll) dr.scrollTop = reuse.scroll;
@@ -1624,6 +1699,28 @@ async function kxHomeAct(el) {
     api(kxUsersUrl()).then((d) => { lsData = d; renderHomeV2(); }).catch(() => {});
   } catch (e) { alert(e.message); }
 }
+// ホームの並びを作りかえる（2026-11-25 田中さん「2枚目（案C）でホームを作りかえて。タスクは『タスク』という表記、一覧で出して」）。
+//   今までの要アクションの枠から、自分／全員の切りかえと要アクションの行を取り出し、タスクの枠に入れ直す（行の動き・ボタンはそのまま使う）
+function kh3Layout(box, o) {
+  const row = box.querySelector(".h2-row"), act = box.querySelector(".h2-act"), left = box.querySelector(".h2-left"), side = box.querySelector(".h2-side"), mine = box.querySelector("#kh2Mine");
+  if (!row || !act || !left || !side) return;
+  const scope = act.querySelector(".h2-scope"), list = act.querySelector(".h2-list");
+  const v = (n) => (n == null ? "…" : n);
+  const sec = document.createElement("section"); sec.className = "h2-box h3-task";
+  sec.innerHTML = `<div class="h2-h"><h2>タスク</h2></div>
+    <div class="h3-tiles"><div class="t all"><small>ぜんぶ</small><b data-tk-n>${v(kh2.tkN)}</b><span>件</span></div><div class="t over"><small>期限切れ</small><b data-tk-over2>${v(kh2.tkOver)}</b><span>件</span></div><div class="t today"><small>今日</small><b data-tk-today>${v(kh2.tkToday)}</b><span>件</span></div></div>
+    <div class="h3-alert${o.actCos ? "" : " calm"}" role="alert"><div class="h3-alert-h"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17h.01"/></svg><b>${o.actCos ? `要アクション ${o.actCos}社` : "要アクションはありません"}</b>${o.ksTxt ? `<span class="s">${esc(o.ksTxt)}</span>` : ""}</div></div>
+    <div class="h2-tk" id="kh2Tasks"><div class="kx-note" style="padding:10px 4px">読み込み中…</div></div>`;
+  if (scope) sec.querySelector(".h2-h").appendChild(scope);
+  if (list && o.actCos) { list.hidden = false; sec.querySelector(".h3-alert").appendChild(list); }   // 0社のときは見出しの1行だけ（場所をとらない）
+  if (mine) side.prepend(mine);
+  left.innerHTML = ""; left.appendChild(sec);
+  row.classList.add("h3");
+}
+function kh3PaintTiles() {
+  const a = document.querySelector("[data-tk-over2]"); if (a && kh2.tkOver != null) a.textContent = kh2.tkOver;
+  const b = document.querySelector("[data-tk-today]"); if (b && kh2.tkToday != null) b.textContent = kh2.tkToday;
+}
 // 託した次回アクションの担当の名前に使う（ホーム）
 if (!window.__kxPeople) { window.__kxPeople = []; api("/api/kinxs/people").then((d) => { window.__kxPeople = d.items || []; if (VIEW === "home" && typeof lsData !== "undefined" && lsData) try { renderHomeV2(); } catch {} }).catch(() => {}); }
 // ホームの要アクションの「タスク」（2026-11-12）：カードの数を入れ、タスクのカードを選んだら、会社の詳細のタスクと同じまとまりで出す
@@ -1638,7 +1735,7 @@ async function kh2LoadTasks(who0) {
   const hidden0 = Math.max(0, (Number(d.total) || items.length) - (d.items || []).length);
   kh2.tkN = items.length + hidden0; const nb = document.querySelector("[data-tk-n]"); if (nb) nb.textContent = kh2.tkN;
   // 期限を過ぎているタスクの数（2026-11-13 田中さん）
-  { const td0 = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); kh2.tkOver = items.filter((t0) => t0.due && t0.due < td0).length; kh2.tkOverSet = new Set(items.filter((t0) => t0.due && t0.due < td0)); kxTkOverPaint(); }
+  { const td0 = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); kh2.tkOver = items.filter((t0) => t0.due && t0.due < td0).length; kh2.tkOverSet = new Set(items.filter((t0) => t0.due && t0.due < td0)); kh2.tkToday = items.filter((t0) => t0.due === td0).length; kxTkOverPaint(); }
   const box = $("kh2Tasks"); if (!box) return;
   const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   const wk = new Date(Date.now() + 9 * 3600000 + 7 * 86400000).toISOString().slice(0, 10);
@@ -1655,7 +1752,7 @@ async function kh2LoadTasks(who0) {
       const canMove = (t0.kind === "次回アクション" && t0.accountId) || (t0.id && !String(t0.key || "").startsWith("auto:")) || (t0.id && /（自動）|Claude/.test(String(t0.src || "")));
       if (!canMove || !pp.length) return `<span class="who">${esc(nm)}</span>`;
       return `<label class="who h2-who" data-noopen title="押すとほかの人に移せます">${esc(nm || "担当")}<select data-tk-who="${i0}"><option value="">移す人を選ぶ</option>${pp.map((p0) => `<option value="${esc(p0.email)}" ${p0.email === cur ? "selected" : ""}>${esc(p0.name)}</option>`).join("")}</select></label>`; })();
-    return `<div class="h2-li h2-tkrow" data-tk="${i0}" ${t0.accountId ? `data-tk-open="${esc(t0.accountId)}"` : ""} role="button" tabindex="0"><span class="${dcls}">${dl}${em}</span><span class="co">${x ? kxLogoMini(x) : ""}<b>${esc(t0.account || "（会社なし）")}</b></span><span class="what">${esc(t0.title)}<small class="h2-src">${esc(t0.kind === "次回アクション" ? "次回アクション" : lbl(t0.src))}</small></span>${who}<span class="h2-ops" data-noopen>${d.mine ? '<button type="button" class="h2-op done" data-tk-done title="済みにする">✓ 済み</button>' : ""}${(t0.kind === "次回アクション" && t0.accountId) || (t0.id && !String(t0.key || "").startsWith("auto:")) || (d.mine && t0.key) ? '<button type="button" class="h2-del" data-tk-del title="このタスクを消す" aria-label="消す"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9.5 7V5.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2V7"/><path d="M6.5 7l.9 11.6c.1 1 .9 1.9 2 1.9h5.2c1 0 1.9-.8 2-1.9L17.5 7"/><path d="M10.3 11v5.5M13.7 11v5.5"/></svg></button>' : ""}</span></div>`; };
+    return `<div class="h2-li h2-tkrow" data-tk="${i0}" ${t0.accountId ? `data-tk-open="${esc(t0.accountId)}"` : ""} role="button" tabindex="0"><label class="${dcls} edit" data-noopen title="押すと期日を変えられます">${dl}${em}<input type="date" data-tk-due="${i0}" value="${esc(t0.due || "")}" aria-label="期日を変える"></label><span class="co">${x ? kxLogoMini(x) : ""}<b>${esc(t0.account || "（会社なし）")}</b></span><span class="what">${esc(t0.title)}<small class="h2-src">${esc(t0.kind === "次回アクション" ? "次回アクション" : lbl(t0.src))}</small></span>${who}<span class="h2-ops" data-noopen>${d.mine ? '<button type="button" class="h2-op done" data-tk-done title="済みにする">✓ 済み</button>' : ""}${(t0.kind === "次回アクション" && t0.accountId) || (t0.id && !String(t0.key || "").startsWith("auto:")) || (d.mine && t0.key) ? '<button type="button" class="h2-del" data-tk-del title="このタスクを消す" aria-label="消す"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9.5 7V5.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2V7"/><path d="M6.5 7l.9 11.6c.1 1 .9 1.9 2 1.9h5.2c1 0 1.9-.8 2-1.9L17.5 7"/><path d="M10.3 11v5.5M13.7 11v5.5"/></svg></button>' : ""}</span></div>`; };
   box.innerHTML = `<div class="kx-note" style="padding:2px 4px 6px">${d.all ? "全員" : d.mine ? "自分" : esc(who)}のタスク（期限の近い順）</div><div class="h2-list">` + (items.length ? items.map((t0, i0) => row(t0, i0)).join("") : '<div class="kx-empty">タスクはありません 🎉</div>') + "</div>";
   box.querySelectorAll("[data-tk-open]").forEach((el) => el.addEventListener("click", (e) => { if (e.target.closest("[data-noopen], button, select, label")) return; openDetail(el.dataset.tkOpen); }));
   box.querySelectorAll("[data-tk-co]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.tkCo) openDetail(b.dataset.tkCo); }));
@@ -1690,6 +1787,24 @@ async function kh2LoadTasks(who0) {
       if (typeof kxDoneToast === "function") kxDoneToast("済みにしました");
     } catch (err) { li.classList.remove("gone"); li.style.display = ""; b.classList.remove("on"); kh2.tkN += 1; if (nb) nb.textContent = kh2.tkN; alert(err.message); }
   }));
+  // 期日を変える（2026-11-25 田中さん「ここで日付ずらせるように」）：期日の札を押すとカレンダーが開き、選んだ日に変えて読み直す。
+  //   次回アクションは会社の次回アクションの日（時間があれば時間はそのまま）、ふつうのタスクはタスクの期日、自動のタスクは状態として残す
+  box.querySelectorAll("input[data-tk-due]").forEach((inp) => {
+    inp.addEventListener("click", (e) => { e.stopPropagation(); try { inp.showPicker(); } catch {} });
+    inp.addEventListener("change", async () => {
+      const t0 = items[Number(inp.dataset.tkDue)]; const dv = inp.value; if (!t0 || !dv) return;
+      try {
+        if (t0.kind === "次回アクション" && t0.accountId) {
+          const x0 = ((typeof lsData !== "undefined" && lsData && lsData.items) || []).find((y) => y.id === t0.accountId) || {};
+          const tm = x0.naAt ? new Date(new Date(x0.naAt).getTime() + 9 * 3600000).toISOString().slice(11, 16) : "";
+          await api(`/api/kinxs/accounts/${encodeURIComponent(t0.accountId)}`, { method: "PUT", body: JSON.stringify(tm ? { na_at: `${dv}T${tm}` } : { na_due: dv }) });
+        } else if (t0.id && !String(t0.key || "").startsWith("auto:")) await api(t0.accountId ? `/api/kinxs/accounts/${encodeURIComponent(t0.accountId)}/tasks/${t0.id}` : `/api/kinxs/tasks/${t0.id}`, { method: "PUT", body: JSON.stringify({ due: dv, dups: t0.dups }) });
+        else await api("/api/kinxs/tasks/state", { method: "POST", body: JSON.stringify({ dups: t0.dups, key: t0.key, title: t0.title, accountId: t0.accountId, account: t0.account, src: t0.src, status: t0.status || "未着手", due: dv }) });
+        if (typeof kxDoneToast === "function") kxDoneToast(`期日を ${Number(dv.slice(5, 7))}/${Number(dv.slice(8, 10))} にしました`);
+        kh2LoadTasks(who).catch(() => {});
+      } catch (err) { alert("期日を変えられませんでした：" + err.message); }
+    });
+  });
   kh2WireDel(box, items);
 }
 // 消す（2026-11-19 田中さん「タスクを削除できるようにして」）：済みと同じく、押したらすぐ行を消す。失敗したら戻す
@@ -1720,6 +1835,9 @@ function kh2FitTasks() {
 window.addEventListener("resize", () => kh2FitTasks());
 function renderHomeV2() {
   const box = $("kh2"); if (!box || !lsData) return;
+  // 新しいホーム（2026-11-25 田中さん「案C でホームを作りかえて」）：要アクションの切りかえ（キックオフ／検収書／タスク）と大きく表示はやめ、
+  //   左＝タスク（数字3つ・要アクションをアラートとして上に固定・タスクの一覧）、右＝担当企業・これからの更新・情報不足
+  kh2.kf = ""; window.__kxActBig = false;
   const items = (lsData.items || []).filter((x) => !x.archived);
   const allIt = lsData.items || [];   // 数字はアーカイブした会社も入れて数える
   // ホームはいつも今月（月の切りかえは出さない）（2026-11-13 田中さん「ホームには月選択いらない」）
@@ -1801,8 +1919,13 @@ function renderHomeV2() {
   <section class="h2-box h2-miss"><div class="h2-h"><h2>情報不足の企業</h2>${ms ? `<span class="h2-big" data-cu="${msItems.length}">${msItems.length}<small>社</small></span>` : ""}<a class="h2-link" href="/kinxs?p=missing">情報不足へ ›</a></div>
     ${ms ? `<div class="h2-bars">${reqN.filter(([, n]) => n).map(([r, n]) => `<button type="button" class="h2-bar" data-miss="${esc(r.key)}"><span class="k">${esc(r.short || r.name)}</span><span class="b" data-grow><i style="width:${(n / maxReq) * 100}%"></i></span><span class="n">${n}</span></button>`).join("") || '<div class="h2-note">足りない情報はありません</div>'}</div>` : '<div class="h2-note">SFを読んでいます…</div>'}</section></div>
   </div>`;
+  kh3Layout(box, { actCos, ksTxt: (() => { const n0 = actRows.filter((r) => r.a.kind === "検収書 未回収").length; const all0 = n0 + ksDoneRows.length; return all0 ? `${Number(kxThisYm.slice(5))}月の検収書 未回収 ${n0}／${all0}社` : ""; })() });
   kxFitHome2();
   if ($("kh2Mine")) renderMine($("kh2Mine"), { home: true, items: lsData.items || [], who: kxCsF });
+  // 担当企業の枠の余白を押したら、担当企業の画面を大きくモーダルで出す（2026-11-25 田中さん「担当企業も余白クリックしたら大きくモーダルで」）。
+  //   会社のカード・行・ボタン・切りかえを押したときは、これまでどおりそれぞれの動き
+  { const mb = $("kh2Mine"); if (mb && !mb.dataset.bigWired) { mb.dataset.bigWired = "1";   // カーソルはふつうのまま（虫めがねはやめた 2026-11-25 田中さん）
+    mb.addEventListener("click", (e) => { if (e.target.closest("button, a, select, input, label, [data-open], [data-mk], [data-mwho], .kx-uc, .h2-li, [role=button]")) return; kxMineBig(); }); } }
   // 動きは1回だけ：月を開いた（変えた）ときに全体を1回。情報不足は、あとから読めたときにその枠だけ1回（2026-11-04 「2回読み込まれるのやめてほしい」）
   if (kh2.animKey !== ym) { kh2.animKey = ym; kh2.missAnim = !!ms; kxCountUp(box); }
   else if (ms && !kh2.missAnim) { kh2.missAnim = true; kxCountUp(box.querySelector(".h2-miss")); }
@@ -2522,19 +2645,74 @@ if (VIEW === "mine") renderMine();
 // ===== 担当企業（2026-11-20 久野さん「自分のもってる企業って何社か、どのような状況か、ぱっとみれるようにしたい」）=====
 //   CS 担当で絞った会社を、キックオフ・検収書・納品メール・掲載の状況で数えて、押すとその会社を並べる。タスクはホームのタスクと同じもの
 //   ホームでは要アクションの下にも同じものを出す（opts.home。会社の一覧はホームがもう読んでいるものを使う）（2026-11-24 田中さん）
+// ===== 会社のステージ（2026-11-25 田中さん「ステージをそろえたい」）=====
+//   受注 → キックオフ設定 → キックオフ実施 → 検収書回収 → 納品メール回収 → オンボーディング中 → 要確認 → 掲載・利用中
+//   担当企業の流れ（ホーム・担当企業の画面）と、企業モーダルの「いまどこ？」の道のりは、どちらもこれを使う。
+//   前の5つは「済んだら次へ」。納品メールのあとは、掲載・利用が確認できたら「掲載・利用中」、できていなければ
+//   納品メールから2か月（60日）は「オンボーディング中」、2か月を過ぎたら「要確認」
+const KX_STAGES = [
+  { k: "s0", l: "受注", c: "#0d5b47" }, { k: "s1", l: "キックオフ設定", c: "#E0A100" }, { k: "s2", l: "キックオフ実施", c: "#D08A00" },
+  { k: "s3", l: "検収書回収", c: "#C43D3D" }, { k: "s4", l: "納品メール回収", c: "#3F72C9" }, { k: "s5", l: "オンボーディング中", c: "#6B4FB8" },
+  { k: "s6", l: "要確認", c: "#B4441F" }, { k: "s7", l: "掲載・利用中", c: "#1d9e75" },
+];
+function kxStageInfo(x) {
+  const pub = !!(x.published || x.publishedOn || (x.places || []).length) || /^活用：(公開掲載|限定公開)/.test(String(x.usage || ""));
+  const koNotDone = (x.actions || []).some((a) => a.kind === "キックオフ未実施") || (x.label === "フォローMTG設定済" && !x.followDone);
+  const koAct = (x.actions || []).find((a) => a.kind === "キックオフ未実施");
+  const koSet = !koNotDone || !!x.kickoffClear || (koAct && koAct.ko && koAct.ko !== "未設定");
+  // 初期費用なし（アチコチパースだけなど）は検収書が要らないので、検収書回収は飛ばして済みにする（2026-11-25 田中さん）
+  const kenSkip = x.initFee === false;
+  const ken = kenSkip || !!x.delivered || String(x.kenshuSt || x.kenshu || "").startsWith("回収済み") || x.kenshuSt === "対象外" || !!x.kenshuNa;
+  // 納品メール：送付済みのほか、2026年10月より前に受注して納品済みとみなす会社（delivered で ksMonth が空）は対象外＝済み（担当企業の前の数え方と同じ）
+  const mail = String(x.mail || "").startsWith("送付済み") || (!!x.delivered && !x.ksMonth);
+  const done = [!!(x.booked || x.docBooked), koSet, !koNotDone, ken, mail];
+  // 受注日が入っていなくても、先の段が済んでいれば受注は済み
+  if (!done[0] && done.slice(1).some(Boolean)) done[0] = true;
+  let i = done.findIndex((v) => !v);
+  const mOn = x.mailOn || (mail ? x.deliveredOn : "");   // 送った日が分からないときは納品日をめやすに
+  const mailDays = mOn ? Math.floor((Date.now() - Date.parse(String(mOn).slice(0, 10) + "T00:00:00+09:00")) / 86400000) : null;
+  if (i < 0) i = pub ? 7 : mailDays != null && mailDays >= 60 ? 6 : 5;
+  return { i, done, pub, mailDays, kenSkip };
+}
+const kxStageOf = (x) => kxStageInfo(x).i;
+// 一覧の会社の下に出す一言（その段で何を待っているか）
+function kxStageNote(x, gi) {
+  const si = kxStageInfo(x);
+  if (gi === 0) return "受注日がまだ入っていません";
+  if (gi === 1) return "キックオフ未設定（カレンダーのキックオフの予定も CS 連携もありません）";
+  if (gi === 2) { const a = (x.actions || []).find((a0) => a0.kind === "キックオフ未実施"); return (a && a.detail) || "キックオフ（確認MTG）の予定はあるが、まだ実施していません"; }
+  if (gi === 3 && x.initFee === false) return "初期費用なし（検収書は不要）";
+  if (gi === 3) return `検収書：${x.kenshuSt || x.kenshu || "未回収"}${x.ksMonth ? `・回収予定 ${Number(x.ksMonth.slice(5))}月` : ""}`;
+  if (gi === 4) return `納品メール：${x.mail || "未送付"}`;
+  if (gi === 5) return `納品メールから${si.mailDays != null ? `${si.mailDays}日` : "—"}・掲載・利用はまだ確認できていません`;
+  if (gi === 6) return `納品メールから${si.mailDays}日たっても、掲載・利用が確認できていません`;
+  return `掲載 ${x.publishedOn || "日付なし"}${(x.places || []).length ? `・${x.places.map((p) => p.where).filter(Boolean).slice(0, 2).join("・")}` : ""}`;
+}
+function kxMineBig() {
+  const bg = document.createElement("div"); bg.className = "kx-drawer-bg";
+  bg.innerHTML = `<aside class="kx-drawer kx-mine-big" role="dialog" aria-label="担当企業"><div class="kx-mine-big-h"><h2>担当企業</h2><button type="button" class="kx-btn" data-x style="margin-left:auto">閉じる</button></div><div data-mine-big></div></aside>`;
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape" && !document.querySelector(".kx-drawer-bg ~ .kx-drawer-bg")) close(); };
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  bg.querySelector("[data-x]").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(bg);
+  renderMine(bg.querySelector("[data-mine-big]"), { big: true, items: (lsData && lsData.items) || [], who: (window.__mineH && window.__mineH.who) || "" });
+}
 async function renderMine(boxArg, opts = {}) {
   const box = boxArg || $("vMineBody"); if (!box) return;
   const home = !!opts.home;
-  if (!home && $("kxPageName")) $("kxPageName").textContent = "担当企業";
+  if (!home && !opts.big && $("kxPageName")) $("kxPageName").textContent = "担当企業";
   let d;
   if (opts.items) d = { items: opts.items };
   else { box.innerHTML = '<div class="kx-empty">読み込み中…</div>'; try { d = await api(kxUsersUrl()); } catch (e) { box.innerHTML = `<div class="kx-empty">読めませんでした：${esc(e.message)}</div>`; return; } }
   const all = (d.items || []).filter((x) => !x.archived && kxHasDoc(x) && x.label !== "解約済み");
   // ホームでは、要アクションの「自分／全員」にそろえる（担当のプルダウンとタスクは出さない）（2026-11-24 田中さん「ホームの場合、担当企業のタスクはいらない」「自分と全員で選択するから担当企業のプルダウンはいらない」）
   //   ホームと担当企業の画面で、選んだ数（k）が混ざらないように覚え場所を分ける
-  const st = home ? (window.__mineH || (window.__mineH = { who: "", k: "all" })) : (window.__mine || (window.__mine = { who: "", k: "all" }));
+  // 大きなモーダル（kxMineBig）は、開いたときのホームの「自分／全員」から始める（2026-11-25）
+  const st = home ? (window.__mineH || (window.__mineH = { who: "", k: "all" })) : opts.big ? (window.__mineB = { who: opts.who || "", k: (window.__mineH && window.__mineH.k) || "all" }) : (window.__mine || (window.__mine = { who: "", k: "all" }));
   if (home) { st.who = opts.who || ""; if (st.k === "tk") st.k = "all"; }
-  else if (!st.who) { const me0 = kxSurname(window.__kxMe || ""); st.who = me0 || ""; }
+  else if (!opts.big && !st.who) { const me0 = kxSurname(window.__kxMe || ""); st.who = me0 || ""; }
   const names = [...new Set(all.map((x) => kxSurname(x.cs) || "").filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
   if (st.who && !names.includes(st.who)) names.unshift(st.who);
   const pubd = (x) => !!(x.published || x.publishedOn || (x.places || []).length);
@@ -2552,15 +2730,9 @@ async function renderMine(boxArg, opts = {}) {
     ["all", "担当ユーザー数", "#0d5b47", () => true, (x) => x.label],
     ["dw", "今月納品待ち", "#1d9e75", (x) => waitIng(x) && dlvYm(x) <= thisYm, dlvNote, (a, b) => dlvYm(a).localeCompare(dlvYm(b)) || String(a.name).localeCompare(String(b.name), "ja")],
     ["dn", "来月納品待ち", "#5DCAA5", (x) => waitIng(x) && dlvYm(x) === nextYm, dlvNote, (a, b) => String(a.name).localeCompare(String(b.name), "ja")],
-    // キックオフ未実施＝CS の確認MTG（フォローMTG）がまだの会社（2026-11-24 田中さん）。キックオフ（FS）の予定が無い・済んでいない会社に加えて、
-    //   「フォローMTG設定済」（予定は入ったが、まだ実施していない）も入れる
-    //   フォローMTG設定済でも、受注後に【ユ/フォ】・ユーザーフォロー・CS 担当の商談履歴があれば実施済みとして外す（x.followDone・サーバーで判定）（2026-11-24 田中さん）
-    ["ko", "キックオフ未実施", "#E0A100", (x) => (x.actions || []).some((a) => a.kind === "キックオフ未実施") || (x.label === "フォローMTG設定済" && !x.followDone),
-      (x) => ((x.actions || []).find((a) => a.kind === "キックオフ未実施") || {}).detail || (x.label === "フォローMTG設定済" ? (x.kickoffClear ? "フォローMTG設定済（確認MTGの商談履歴がまだありません）" : "キックオフ未設定（カレンダーのキックオフの予定も CS 連携もありません）") : "")],
-    ["ks", "検収書の回収が必要", "#C43D3D", (x) => !x.delivered && !(String(x.kenshuSt || "").startsWith("回収済み") || x.kenshuSt === "対象外"), (x) => `検収書：${x.kenshuSt || "未回収"}${x.ksMonth ? `・回収予定 ${Number(x.ksMonth.slice(5))}月` : ""}`],
-    ["ml", "納品メールの対応が必要", "#3F72C9", (x) => !String(x.mail || "").startsWith("送付済み") && (!x.delivered || !!x.ksMonth), (x) => `納品メール：${x.mail || "未送付"}`],
-    ["np", "納品済み・未掲載", "#8A4B00", (x) => x.delivered && !pubd(x), (x) => `納品 ${x.deliveredOn || "—"}${x.noPlace ? "・未掲載と決めた会社" : ""}`],
-    ["pb", "納品済み・掲載中", "#1d9e75", (x) => x.delivered && pubd(x), (x) => `掲載 ${x.publishedOn || "日付なし"}${(x.places || []).length ? `・${x.places.map((p) => p.where).filter(Boolean).slice(0, 2).join("・")}` : ""}`],
+    // 下の段：会社のステージ（kxStageOf）。いまその段にいる会社を数える（2026-11-25 田中さん「ステージをそろえたい」）
+    //   流れの先頭は「受注」ではなく「キックオフ未設定」（2026-11-25 田中さん「受注ではなくキックオフ未設定」）。受注の段にいる会社（受注日も先の記録も無い）もここに数える
+    ...KX_STAGES.slice(1).map((g, j) => { const gi = j + 1; return [g.k, gi === 1 ? "キックオフ未設定" : g.l, g.c, (x) => (gi === 1 ? kxStageOf(x) <= 1 : kxStageOf(x) === gi), (x) => kxStageNote(x, kxStageOf(x) === 0 ? 0 : gi)]; }),
   ];
   // 担当企業の画面は1画面に固定して、会社の一覧だけを中で巻き取る（2026-11-24 田中さん「上に詰めて、会社一覧はスクロールできるように」）。スマホ（幅860px以下）は今まで通り
   const miFit = () => { if (home || !box.isConnected) return; const wide = window.innerWidth > 860; box.classList.toggle("mi-fixed", wide);
@@ -2570,29 +2742,36 @@ async function renderMine(boxArg, opts = {}) {
   const draw = () => {
     requestAnimationFrame(miFit);
     const mine = all.filter((x) => !st.who || (kxSurname(x.cs) || "") === st.who);
+    if (st.k !== "tk" && !KS.find((k) => k[0] === st.k)) st.k = "all";   // 前の数字（ko・ks など）を覚えていたら、全部に戻す
     const cur = KS.find((k) => k[0] === st.k);
     const list = cur ? mine.filter(cur[3]).sort(cur[5] || ((a, b) => String(b.booked || "").localeCompare(String(a.booked || "")))) : [];
     const whoSel = `<label class="kx-note" style="display:flex;align-items:center;gap:6px">CS 担当<select class="kx-in" data-mwho style="width:auto"><option value="">全員</option>${names.map((n) => `<option ${n === st.who ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
-    box.innerHTML = `${home ? `<div class="h2-h"><h2>担当企業</h2><span class="h2-big">${mine.length}<small>社</small></span><a class="h2-link" href="/kinxs?p=mine" style="margin-left:auto">担当企業へ ›</a></div>` : `<div class="mi-tools">${whoSel}</div>`}
+    box.innerHTML = `${home ? `<div class="h2-h"><h2>担当企業</h2><span class="h2-big">${mine.length}<small>社</small></span>${/* 今月・来月の納品待ちは見出しのとなりに小さく（押すとその会社を下に出す。もう一度押すと戻る）（2026-11-25 田中さん「ここいらない。今月納品待ちとかは担当企業のとなりに」） */ ""}${KS.filter((x) => x[0] === "dw" || x[0] === "dn").map(([k, l, c, f]) => `<button type="button" class="mi-chip ${st.k === k ? "on" : ""}" style="--c:${c}" data-mk="${k}">${esc(l)} <b>${mine.filter(f).length}</b><small>社</small></button>`).join("")}${/* 「担当企業へ ›」は、余白を押すと大きなモーダルで出るようになったのでやめた（2026-11-25 田中さん「担当企業へ いらないかもな」） */ ""}</div>` : `<div class="mi-tools">${whoSel}</div>`}
       ${(() => {
         // 並び（2026-11-24 田中さん）：上の段＝担当ユーザー数・今月納品待ち・来月納品待ち（・タスク）、
         //   下の段＝キックオフ未実施 → 検収書 → 納品メール → 納品済み・未掲載 → 納品済み・掲載中（進む順なので矢印でつなぐ）
         const tl = ([k, l, c, f]) => `<button type="button" class="mi-kpi ${st.k === k ? "on" : ""}" style="--c:${c}" data-mk="${k}"><span class="l"><i></i>${esc(l)}</span><span class="v">${mine.filter(f).length}<small>社</small></span></button>`;
         const TOP = ["all", "dw", "dn"];
-        return `<div class="mi-kpis">${KS.filter((x) => TOP.includes(x[0])).map(tl).join("")}`;
+        // ホームでは上の3つの数字の段は出さない（納品待ちは見出しのとなりへ）（2026-11-25 田中さん）
+        return `<div class="mi-kpis"${home ? " hidden" : ""}>${KS.filter((x) => TOP.includes(x[0])).map(tl).join("")}`;
       })()}
         ${home ? "" : `<button type="button" class="mi-kpi ${st.k === "tk" ? "on" : ""}" style="--c:#6B4FB8" data-mk="tk"><span class="l"><i></i>タスク</span><span class="v" data-mtk-n>…<small>件</small></span></button>`}</div>
-      <div class="mi-flow">${["ko", "ks", "ml", "np", "pb"].map((k) => KS.find((x) => x[0] === k)).filter(Boolean).map(([k, l, c, f]) => {
+      <div class="mi-flow">${KX_STAGES.map((g) => KS.find((x) => x[0] === g.k)).filter(Boolean).map(([k, l, c, f]) => {
         // キックオフ未実施は、「未設定（予定がまだ無い）」と「設定済み・未実施（予定はあるがまだやっていない）」に分けて出す（2026-11-24 田中さん）
         let sub = "";
-        if (k === "ko") { const ks0 = mine.filter(f).map((x) => (x.actions || []).find((a0) => a0.kind === "キックオフ未実施") || { ko: x.kickoffClear ? "設定済み" : "未設定" });   // 設定済みは、カレンダーのキックオフの予定か CS 連携があるときだけ（2026-11-24 久野さん）
+        if (k === "s2") { const ks0 = mine.filter(f).map((x) => (x.actions || []).find((a0) => a0.kind === "キックオフ未実施") || { ko: x.kickoffClear ? "設定済み" : "未設定" });   // 設定済みは、カレンダーのキックオフの予定か CS 連携があるときだけ（2026-11-24 久野さん）
           const un = ks0.filter((a0) => a0.ko === "未設定").length;
           sub = `<span class="mi-sub"><span>未設定 <b>${un}</b></span><span>設定済み・未実施 <b>${ks0.length - un}</b></span></span>`; }
-        return `<button type="button" class="mi-kpi ${st.k === k ? "on" : ""}" style="--c:${c}" data-mk="${k}"><span class="l"><i></i>${esc(l)}</span><span class="v">${mine.filter(f).length}<small>社</small></span>${sub}</button>`; }).join('<span class="mi-arr" aria-hidden="true"><i><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5.5l6.5 6.5L9 18.5"/></svg></i></span>')}</div>
+        // キックオフ未設定と要確認は、1社でもあれば大きく・点滅させて目立たせる（2026-11-25 田中さん「でっかく強調して、ピコピコしてほしい」）
+        const n0 = mine.filter(f).length; const hot = (k === "s1" || k === "s6") && n0 > 0;
+        return `<button type="button" class="mi-kpi ${st.k === k ? "on" : ""}${hot ? " hot" : ""}" style="--c:${c}" data-mk="${k}"><span class="l"><i></i>${esc(l)}</span><span class="v">${n0}<small>社</small></span>${sub}</button>`; }).join('<span class="mi-arr" aria-hidden="true"><i><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5.5l6.5 6.5L9 18.5"/></svg></i></span>')}</div>
       ${st.k === "tk" ? `<div class="mi-h">タスク（ホームと同じもの・期日の近い順）</div><div data-mtk><div class="kx-note">読み込み中…</div></div>`
         : `<div class="mi-h">${esc(cur ? cur[1] : "")}<span class="kx-note">${list.length}社</span></div><div class="mi-list">${list.length ? list.map((x) => `<div class="mi-co" role="button" tabindex="0" data-mopen="${esc(x.id)}">${kxLogoMini(x)}<span class="t"><b>${esc(x.name)}</b><small>${esc(cur[4](x) || "")}</small></span><span class="lb">${esc(x.label)}</span></div>`).join("") : '<div class="kx-empty" style="grid-column:1/-1">ありません</div>'}</div>`}`;
     const wsel = box.querySelector("[data-mwho]"); if (wsel) wsel.addEventListener("change", (e) => { st.who = e.target.value; draw(); });
-    box.querySelectorAll("[data-mk]").forEach((b) => b.addEventListener("click", () => { st.k = b.dataset.mk; draw(); }));
+    // ホームでは、段や納品待ちを押すと、その会社の一覧をモーダルで出す（2026-11-25 田中さん「それぞれクリックしたらモーダルで企業一覧が出てくるように」）
+    box.querySelectorAll("[data-mk]").forEach((b) => b.addEventListener("click", (e) => {
+      if (home) { e.stopPropagation(); const k0 = KS.find((x) => x[0] === b.dataset.mk); if (k0) kxCoListPopup(`${k0[1]}${st.who ? `（${st.who}）` : ""}`, mine.filter(k0[3]).sort(k0[5] || ((a, c) => String(c.booked || "").localeCompare(String(a.booked || ""))))); return; }
+      st.k = b.dataset.mk; draw(); }));
     box.querySelectorAll("[data-mopen]").forEach((el) => { const go = () => openDetail(el.dataset.mopen); el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); }); });
     if (!home) loadTasks();
   };
@@ -3613,29 +3792,32 @@ function kxNowCard(d) {
   const daysTo = (ymd) => Math.round((Date.parse(String(ymd).slice(0, 10) + "T00:00:00Z") - Date.parse(new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10) + "T00:00:00Z")) / 86400000);
   const md = (iso) => { const t = String(iso || "").slice(0, 10); return t ? `${Number(t.slice(5, 7))}/${Number(t.slice(8, 10))}` : ""; };
   const usage = st.usage || x.usage || "";
-  const kenOk = x.kenshuNa || x.kenshuDone === true || String(x.kenshu || "").startsWith("回収済み");
+  const kenOk = x.initFee === false || x.kenshuNa || x.kenshuDone === true || String(x.kenshu || "").startsWith("回収済み");   // 初期なしは検収書が要らない
   const mailOk = x.mailDone === true || String(x.mail || "").startsWith("送付済み");
   const pubOk = x.published === true || x.published === "true";
   const useOk = /^活用：(公開掲載|限定公開)/.test(usage);
   const koOk = !!(d.kickoffAt && Date.parse(d.kickoffAt) <= Date.now());
+  // 道のりは、担当企業の流れと同じ8段（kxStageInfo）（2026-11-25 田中さん「ステージをそろえたい」）。
+  //   段を押したときに開く直す欄は、今までの欄（キックオフ・検収書・納品メール・活用・掲載）を使う
+  const si = kxStageInfo({ ...x, usage, booked: x.booked || info.booked });
+  const koAt = d.kickoffAt ? md(d.kickoffAt) : "";
   const steps = [
-    { k: "受注", ok: !!info.booked, sub: info.booked ? `${md(info.booked)} ✓` : "—" },
-    { k: "キックオフ", ok: koOk, sub: d.kickoffAt ? `${md(d.kickoffAt)}${koOk ? " ✓" : "予定"}` : "まだ" },
-    { k: "検収書", ok: kenOk, sub: x.kenshuNa ? "対象外" : kenOk ? "✓" : String(x.kenshu || "").startsWith("依頼済み") ? "依頼済み" : "まだ" },
-    { k: "納品メール", ok: mailOk, sub: mailOk ? "✓" : "まだ" },
-    { k: "掲載", ok: pubOk, sub: pubOk ? "✓" : "まだ" },
-    { k: "活用", ok: useOk, sub: usage ? usage.replace(/^活用：/, "") : "—" },
-    { k: "更新", ok: false, sub: x.renew ? x.renew.replace("-", "/") : "—" },
+    { k: "受注", ok: si.done[0], sub: info.booked ? `${md(info.booked)} ✓` : "—" },
+    { k: "キックオフ設定", ed: "キックオフ", ok: si.done[1], sub: si.done[1] ? (koAt ? `${koAt}${koOk ? "" : "予定"}` : "✓") : "まだ" },
+    { k: "キックオフ実施", ed: "キックオフ", ok: si.done[2], sub: si.done[2] ? (koOk && koAt ? `${koAt} ✓` : "✓") : "まだ" },
+    { k: "検収書回収", ed: "検収書", ok: si.done[3], skipNote: si.kenSkip ? "不要（初期なし）" : "", sub: si.kenSkip ? "不要（初期なし）" : x.kenshuNa ? "対象外" : si.done[3] ? "✓" : String(x.kenshu || "").startsWith("依頼済み") ? "依頼済み" : "まだ" },
+    { k: "納品メール回収", ed: "納品メール", ok: si.done[4], sub: si.done[4] ? (x.mailOn ? `${md(x.mailOn)} ✓` : "✓") : "まだ" },
+    { k: "オンボーディング中", ed: "活用", ok: si.i > 5, sub: si.i === 5 && si.mailDays != null ? `${si.mailDays}日目` : si.i > 5 ? "✓" : "—" },
+    { k: "要確認", ed: "活用", ok: si.i === 7, sub: si.i === 6 ? `${si.mailDays}日たった` : si.i === 7 ? "—" : "2か月で" },
+    { k: "掲載・利用中", ed: "掲載", ok: si.i === 7, sub: si.i === 7 ? (x.publishedOn ? md(x.publishedOn) : "✓") : (x.renew ? `更新 ${x.renew.replace("-", "/")}` : "まだ") },
   ];
-  // いまここ＝いちばん進んだ段の次（前の段が記録されていなくても進める。飛ばした段は「未記録」）（2026-11-11 田中さん）
-  let lastOk = -1; for (let i = 0; i < 6; i++) if (steps[i].ok) lastOk = i;
-  let cur = steps.findIndex((s0, i) => i > lastOk && !s0.ok); if (cur < 0) cur = 6;
-  const head = { 0: "受注の手続き中", 1: "キックオフの前", 2: "納品の手前（検収書の回収待ち）", 3: "納品メールを送る段階", 4: "掲載の確認待ち", 5: "活用を始めるところ", 6: "活用中（次は更新）" }[cur] || "—";
+  const cur = si.i;
+  const head = { 0: "受注の手続き中", 1: "キックオフの設定待ち", 2: "キックオフの実施待ち", 3: "納品の手前（検収書の回収待ち）", 4: "納品メールを送る段階", 5: "オンボーディング中", 6: "要確認（納品メールから2か月、掲載・利用が未確認）", 7: "掲載・利用中" }[cur];
   const since = info.booked ? Math.max(0, Math.floor((Date.now() - Date.parse(info.booked + "T00:00:00+09:00")) / 86400000)) : null;
   // 対応事項（急ぐ順）。act＝その場で片づけるボタンの種類
   const todo = [];
   for (const a of (x.alerts || [])) todo.push({ lv: 1, t: a.rule, s: a.detail, tag: "要注意", act: a.rule === "更新月接近" ? "renew" : a.rule === "NA期限切れ" ? "na" : "" });
-  if (!kenOk) todo.push({ lv: cur === 2 ? 1 : 2, t: String(x.kenshu || "").startsWith("依頼済み") ? "検収書の回収を待つ（依頼済み）" : "検収書を回収する", s: since != null ? `受注から${since}日` : "", tag: "納品", act: "ken", sub: "回収できたらPDFを入れると、相澤さん・幸地さんにチャットで知らせます" });
+  if (!kenOk) todo.push({ lv: cur === 3 ? 1 : 2, t: String(x.kenshu || "").startsWith("依頼済み") ? "検収書の回収を待つ（依頼済み）" : "検収書を回収する", s: since != null ? `受注から${since}日` : "", tag: "納品", act: "ken", sub: "回収できたらPDFを入れると、相澤さん・幸地さんにチャットで知らせます" });
   if (x.na) { const l = x.naDue ? daysTo(x.naDue) : null; const when = x.naAt ? new Date(x.naAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" }) : x.naDue ? md(x.naDue) : "日時未定";
     const n = ((x.naDetail || {}).agenda || []).length;
     todo.push({ lv: l != null && l < 0 ? 1 : l != null && l <= 7 ? 2 : 3, t: `${x.na}（${when}）の準備`, s: `${x.naType || "次回アクション"}${n ? `　確認すること${n}つ` : ""}`, right: l == null ? "" : l < 0 ? `${-l}日過ぎ` : `あと${l}日`, tag: "次回アクション", act: "nax" }); }
@@ -3661,17 +3843,17 @@ function kxNowCard(d) {
   const touchTxt = x.lastTouch ? `${x.sinceTouch}日前` : "—";
   return `<section class="kx-a-where">
       <div class="kx-a-row"><span class="kx-a-q">いまどこ？</span><b class="kx-a-head">${esc(head)}</b>${since != null ? `<span class="kx-a-since">受注から ${since}日</span>` : ""}</div>
-      <div class="kx-a-steps">${steps.map((s0, i) => { const key = { 検収書: "kenshu_done", 納品メール: "mail_done", 掲載: "published" }[s0.k]; const cls = `kx-a-st ${s0.ok ? "ok" : i === cur ? "now" : ""}`; const inner = `<i></i><b>${esc(s0.k)}</b><small>${i === cur ? "いまここ" : esc(s0.sub)}</small>`;
-        const skip = !s0.ok && i < cur && i < 6;   // 先の段は済んでいるのに、記録がない段
+      <div class="kx-a-steps">${steps.map((s0, i) => { const key = { 検収書: "kenshu_done", 納品メール: "mail_done", 掲載: "published" }[s0.k]; const cls = `kx-a-st ${s0.skipNote ? "na" : s0.ok ? "ok" : i === cur ? "now" : ""}`; const inner = `<i></i><b>${esc(s0.k)}</b><small>${i === cur ? "いまここ" : esc(s0.sub)}</small>`;
+        const skip = !s0.ok && i < cur && i < 5;   // 先の段は済んでいるのに、記録がない段
         const cls2 = skip ? `${cls} skip` : cls; const inner2 = skip ? `<i></i><b>${esc(s0.k)}</b><small>未記録</small>` : inner;
         // どの段も押すと、下に直す欄が開く（日付・済み／戻す）。受注は SF から入るので直さない（2026-11-20 田中さん「手で直しにくい」）
         if (s0.k === "受注") return `<div class="${cls2}" title="受注日は SF から入ります">${inner2}</div>`;
-        return `<button type="button" class="${cls2} kx-a-stb" data-step-ed="${esc(s0.k)}" aria-expanded="false" title="押すと、${esc(s0.k)}を直す欄が開きます">${inner2}</button>`; }).join("")}</div>
+        return `<button type="button" class="${cls2}${i === 6 && cur === 6 ? " warn" : ""} kx-a-stb" data-step-ed="${esc(s0.ed || s0.k)}" aria-expanded="false" title="押すと、${esc(s0.ed || s0.k)}を直す欄が開きます">${inner2}</button>`; }).join("")}</div>
       <div class="kx-a-ed" data-step-box hidden></div>
       <div class="kx-note" style="margin-top:-6px">道のりの段を押すと、日付や済み／戻すを直せます</div>
     </section>
     ${top ? `<section class="kx-a-next"><div class="kx-a-nt"><small>次にやること</small><b>${esc(top.t)}</b>${top.sub || top.s ? `<span>${esc(top.sub || top.s)}</span>` : ""}</div><div class="kx-a-nb">${btn(top.act, true, top.hw)}</div></section>` : ""}
-    ${cur === 2 && !x.kenshuNa ? `<section class="kx-sec" data-ken-sec-st><div class="lb">検収書を入れる<span class="kx-note" style="margin-left:8px">PDFを残して、回収をチャットで知らせます</span></div><div data-ken-list data-ken-mode="full" class="kx-note">読み込んでいます…</div></section>` : ""}
+    ${cur === 3 && !x.kenshuNa ? `<section class="kx-sec" data-ken-sec-st><div class="lb">検収書を入れる<span class="kx-note" style="margin-left:8px">PDFを残して、回収をチャットで知らせます</span></div><div data-ken-list data-ken-mode="full" class="kx-note">読み込んでいます…</div></section>` : ""}
     <section class="kx-a-todo"><div class="kx-a-th"><b>対応事項</b><small>${todo.length}件</small></div>
       ${todo.map((t) => `<div class="kx-a-it ${t.lv === 1 ? "hi" : ""}">${chk(t) ? `<input type="checkbox" aria-label="${esc(t.t)}を済みにする" data-now="${chk(t)}">` : `<span class="kx-a-dot" aria-hidden="true"></span>`}
         <div class="kx-a-tx"><b>${esc(t.t)}</b><small>${t.tag ? `<em>${esc(t.tag)}</em>` : ""}${esc(t.s || "")}</small></div>
@@ -3684,7 +3866,7 @@ function kxNowCard(d) {
       <div><small>更新月</small><b>${esc(x.renew ? `${x.renew.replace("-", "/")}${x.left != null ? `（${x.left < 0 ? `${-x.left}日過ぎ` : `あと${x.left}日`}）` : ""}` : "—")}</b></div>
       <div><small>更新確度</small><b>${esc(x.rank || "Z")}${!x.rank || x.rank === "Z" ? "（未判定）" : ""}</b></div>
     </section>
-    ${cur !== 2 && !x.kenshuNa ? `<section class="kx-sec" data-ken-sec><div class="lb">検収書<span class="kx-note" style="margin-left:8px">入れたPDFと、あとから足すとき</span></div><div data-ken-list data-ken-mode="list" class="kx-note">読み込んでいます…</div></section>` : ""}`;
+    ${cur !== 3 && !x.kenshuNa ? `<section class="kx-sec" data-ken-sec><div class="lb">検収書<span class="kx-note" style="margin-left:8px">入れたPDFと、あとから足すとき</span></div><div data-ken-list data-ken-mode="list" class="kx-note">読み込んでいます…</div></section>` : ""}`;
 }
 // 「次にやること」「対応事項」のボタン：今ある欄のボタンを押す・開く（保存のしかたは今までと同じ）
 function kxNowMount(bg) {
@@ -3972,7 +4154,7 @@ async function kxDocAiLoad(bg, d) {
 }
 
 // タスクのカードの「期限切れ ○」の札を描く（2026-11-13）
-function kxTkOverPaint() { const el = document.querySelector("[data-tk-over]"); if (!el) return; const n = (typeof kh2 !== "undefined" && kh2.tkOver) || 0; el.textContent = `期限切れ ${n}`; el.hidden = !n; }
+function kxTkOverPaint() { if (typeof kh3PaintTiles === "function") kh3PaintTiles(); const el = document.querySelector("[data-tk-over]"); if (!el) return; const n = (typeof kh2 !== "undefined" && kh2.tkOver) || 0; el.textContent = `期限切れ ${n}`; el.hidden = !n; }
 
 // アクセス分析ダッシュボードからの取り込みの窓：最後に入れた結果・入れ直すボタン・当たらなかった会社
 async function bvDraw(el) {

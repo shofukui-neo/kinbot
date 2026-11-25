@@ -11,7 +11,7 @@
     <link rel="manifest" href="/kinxs.webmanifest" />
     <meta name="theme-color" content="#0B3B2E" />
     <meta name="apple-mobile-web-app-title" content="kinXs" />
-    <link rel="stylesheet" href="style.css?v=20261124zf" />
+    <link rel="stylesheet" href="style.css?v=20261125v" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css" />
     
 <style>
@@ -391,6 +391,19 @@
   .kx-uc .nm.has-former .t{display:block;}
   .kx-former{display:inline-block;max-width:100%;font-size:11px;font-weight:700;color:#5B6B64;background:#EEF3F0;border:1px solid #DDE7E2;border-radius:6px;padding:1px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.6;}
   .kx-former-h{font-size:13px;font-weight:700;color:#6A7A72;margin-left:4px;}
+  .kx-pen svg{width:14px !important;height:14px !important;flex:none}
+  .kx-pen{display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;padding:0;color:#4F6158}.kx-pen:hover{color:#0d5b47;border-color:#5DCAA5}
+  h2 .kx-hx-id{vertical-align:3px;margin-left:6px;height:22px;font-size:11.5px}
+  .kx-golinks{display:flex;align-items:center;gap:8px;margin-top:5px}
+  .kx-go{display:inline-flex;align-items:center;height:22px;padding:2px 6px;border:1px solid #E1EBE6;border-radius:7px;background:#fff}.kx-go:hover{border-color:#5DCAA5;background:#F2FAF6}
+  .kx-go img{display:block;height:15px;width:auto}.kx-go img.sf{height:16px}
+  .kx-mine-big{width:min(1240px,96vw) !important;max-width:none !important;height:min(900px,92vh);overflow:auto}
+  .kx-mine-big-h{display:flex;align-items:center;gap:10px;margin-bottom:10px}.kx-mine-big-h h2{margin:0}
+  .kx-hx{display:inline-flex;align-items:center;gap:5px;margin-left:4px}
+  .kx-hx-cs{height:26px;border:1px solid #D5E2DB;border-radius:7px;background:#fff;color:#173a30;font:inherit;font-size:12px;font-weight:700;padding:0 6px;cursor:pointer}
+  .kx-hx-id{display:inline-flex;align-items:center;gap:5px;height:26px;border:1px solid #CFE6DC;background:#F2FAF6;color:#0d5b47;border-radius:7px;padding:0 8px;font:inherit;font-size:12px;cursor:pointer}
+  .kx-hx-id b{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;letter-spacing:.02em}
+  .kx-hx-id:hover{background:#E1F5EE;border-color:#5DCAA5}.kx-hx-id.ok{background:#1d9e75;color:#fff;border-color:#1d9e75}.kx-hx-id.ok .kx-note{color:#fff}
   .kx-ren{border:1px solid #D5E2DB;background:#fff;color:#4F6158;border-radius:7px;padding:2px 8px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;vertical-align:3px;margin-left:6px;}
   .kx-ren:hover{color:#0E6B4E;border-color:#1D9E75;}
   /* フェーズ別：列ごとに縦スクロール、列の並びは横スクロール */
@@ -856,7 +869,9 @@
   /* ステータス：道のり型（案A）（2026-11-10） */
   .kx-a-where,.kx-a-todo{background:#fff;border:1px solid #DCE7E1;border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;}
   .kx-a-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;} .kx-a-q{font-size:12.5px;font-weight:800;color:#4F6158;} .kx-a-head{font-size:17px;font-weight:800;color:#14231D;} .kx-a-since{margin-left:auto;font-size:12px;color:#4F6158;}
-  .kx-a-steps{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;}
+  .kx-a-steps{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px;}
+  .kx-a-st.na i{background:repeating-linear-gradient(135deg,#D9E3DE 0 5px,#EEF3F0 5px 10px) !important}.kx-a-st.na b{color:#8FA39A !important;text-decoration:line-through}.kx-a-st.na small{color:#8FA39A !important}
+  .kx-a-st.warn i{background:#B4441F !important}.kx-a-st.warn b,.kx-a-st.warn small{color:#B4441F !important}
   .kx-a-st{display:flex;flex-direction:column;gap:5px;min-width:0;} .kx-a-st i{height:8px;border-radius:4px;background:#DCE7E1;} .kx-a-st b{font-size:12px;font-weight:700;color:#4F6158;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .kx-a-st small{font-size:11px;color:#6A7A72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .kx-a-st.ok i{background:#0E6B4E;} .kx-a-st.ok b{color:#14231D;} .kx-a-st.now i{background:#E07A2E;} .kx-a-st.now b,.kx-a-st.now small{color:#A2480C;font-weight:800;}
   .kx-a-next{background:#0E6B4E;border-radius:16px;padding:18px 20px;color:#fff;display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
@@ -1446,6 +1461,37 @@
     /* パソコン用の「画面を止める」（JS が html に overflow:hidden を付ける）を、スマホでは効かせない */
     html{overflow:auto !important;}
   }
+  /* 新しいホーム（2026-11-25 田中さん「案C」）：左＝タスク（縦いっぱい）、右＝担当企業 → これからの更新（月ごとに縦） → 情報不足 */
+  #kh2 .h2-row.h3{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto;grid-template-areas:"task mine" "task ren" "task miss";gap:10px;}
+  #kh2 .h2-row.h3 .h3-task{grid-area:task;display:flex;flex-direction:column;gap:9px;min-height:0;}
+  #kh2 .h2-row.h3 .h3-task .h2-h{display:flex;align-items:center;gap:10px;margin:0;} #kh2 .h2-row.h3 .h3-task .h2-h h2{font-size:18px;font-weight:900;margin:0;} #kh2 .h2-row.h3 .h3-task .h2-scope{margin-left:auto;}
+  .h3-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+  .h3-tiles .t{border-radius:12px;padding:8px 12px;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;} .h3-tiles .t small{width:100%;font-size:11.5px;font-weight:700;}
+  .h3-tiles .t b{font-size:26px;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums;} .h3-tiles .t span{font-size:12px;}
+  .h3-tiles .all{background:#0d5b47;color:#fff;} .h3-tiles .over{background:#FFF1EF;color:#B32F2F;} .h3-tiles .today{background:#FFF8E8;color:#7A4300;}
+  .h3-alert{border:2px solid #C43D3D;border-radius:12px;overflow:hidden;flex:none;}
+  .h3-alert-h{display:flex;align-items:center;gap:8px;background:#C43D3D;color:#fff;padding:6px 12px;font-size:13px;} .h3-alert-h .s{margin-left:auto;font-size:12px;opacity:.95;}
+  .h3-alert.calm{border-color:#CFE3D9;} .h3-alert.calm .h3-alert-h{background:#EEF6F2;color:#0d5b47;}
+  #kh2 .h2-row.h3 .h3-alert .h2-list{max-height:200px;overflow-y:auto;margin:0 !important;padding:0 8px !important;flex:none;}
+  #kh2 .h2-row.h3 .h3-task .h2-tk{flex:1;min-height:0;overflow-y:auto;margin:0;}
+  #kh2 .h2-row.h3 .h2-mine{grid-area:mine;min-height:0;overflow:auto;} #kh2 .h2-row.h3 .h2-ren{grid-area:ren;} #kh2 .h2-row.h3 .h2-miss{grid-area:miss;}
+  #kh2 .h2-row.h3 .h2-ren{display:block;padding:10px 14px;} #kh2 .h2-row.h3 .h2-miss{padding:10px 14px;}
+  #kh2 .h2-row.h3 .h2-rm{display:grid;grid-template-columns:72px minmax(0,1fr) auto;grid-template-rows:auto auto;gap:2px 10px;align-items:center;padding:4px 2px;border-top:1px solid #F0F3F1;border-radius:0;}
+  #kh2 .h2-row.h3 .h2-rm .m{grid-row:1/3;grid-column:1;flex-direction:row;align-items:baseline;gap:5px;} #kh2 .h2-row.h3 .h2-rm .m b{font-size:14px;}
+  #kh2 .h2-row.h3 .h2-rm .st{grid-row:1;grid-column:2;height:8px;} #kh2 .h2-row.h3 .h2-rm .rk{grid-row:2;grid-column:2;} #kh2 .h2-row.h3 .h2-rm .n{grid-row:1/3;grid-column:3;font-size:17px;text-align:right;}
+  @media (max-width:1100px){ #kh2 .h2-row.h3{grid-template-columns:1fr;grid-template-rows:none;grid-template-areas:"task" "mine" "ren" "miss";} }
+  /* 担当企業の流れで、キックオフ未設定・要確認に会社がいるときは大きく・点滅（2026-11-25 田中さん）。動きを減らす設定の人には点滅させない */
+  .mi-flow .mi-kpi.hot{background:color-mix(in srgb,var(--c) 12%,#fff) !important;box-shadow:inset 4px 0 0 var(--c) !important;min-height:46px !important;}
+  .mi-flow .mi-kpi.hot .l{font-size:14.5px !important;font-weight:900;color:var(--c) !important;}
+  .mi-flow .mi-kpi.hot .v{font-size:28px !important;color:var(--c) !important;animation:kxPico 1.1s ease-in-out infinite;}
+  .mi-flow .mi-kpi.hot .l i{width:15px !important;height:15px !important;animation:kxPicoDot 1.1s ease-in-out infinite;}
+  @keyframes kxPico{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.08)}}
+  @keyframes kxPicoDot{0%,100%{box-shadow:0 0 0 3px #fff,0 0 0 3px color-mix(in srgb,var(--c) 0%,transparent)}50%{box-shadow:0 0 0 3px #fff,0 0 0 8px color-mix(in srgb,var(--c) 35%,transparent)}}
+  @media (prefers-reduced-motion:reduce){.mi-flow .mi-kpi.hot .v,.mi-flow .mi-kpi.hot .l i{animation:none;}}
+  /* ホームの担当企業の見出しのとなりの「今月納品待ち・来月納品待ち」（2026-11-25） */
+  .mi-chip{display:inline-flex;align-items:baseline;gap:3px;margin-left:8px;border:1px solid #D5E2DB;background:#fff;color:#33463E;border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;}
+  .mi-chip b{font-size:15px;color:var(--c);} .mi-chip small{font-size:10.5px;} .mi-chip:hover{border-color:var(--c);} .mi-chip.on{background:color-mix(in srgb,var(--c) 14%,#fff);border-color:var(--c);}
+  #kh2 .h2-mine .mi-kpis[hidden]{display:none !important;}
 </style>
 </head>
   <body>
@@ -1606,8 +1652,8 @@
         </div>
       </div>
     </div>
-    <script src="kbchat.js?v=20261124zf" defer></script>
-    <script src="kinxs.js?v=20261124zf"></script>
+    <script src="kbchat.js?v=20261125v" defer></script>
+    <script src="kinxs.js?v=20261125v"></script>
   <script>
   // スマホのメニューの開け閉め。項目を押したら閉じる（2026-11-24）
   (function () {
